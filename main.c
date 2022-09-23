@@ -15,10 +15,15 @@
 
 #include "se_tee.h"
 
-/* for SE051 */
-#define SE05X_MAX_BUF_SIZE_CMD (1024)
-#define SE05X_MAX_BUF_SIZE_RSP (1024)
-#define SE05X_TLV_BUF_SIZE_CMD SE05X_MAX_BUF_SIZE_CMD
+/* Device detection not implemented */
+#define SE050_MAX_BUF_SIZE_CMD (892)
+#define SE050_MAX_BUF_SIZE_RSP (892)
+#define SE051_MAX_BUF_SIZE_CMD (1024)
+#define SE051_MAX_BUF_SIZE_RSP (1024)
+
+static int SE05X_MAX_BUF_SIZE_CMD = SE051_MAX_BUF_SIZE_CMD;
+static int SE05X_MAX_BUF_SIZE_RSP = SE051_MAX_BUF_SIZE_RSP;
+static int SE05X_TLV_BUF_SIZE_CMD = SE051_MAX_BUF_SIZE_CMD;
 
 #define BINARY_WRITE_MAX_LEN 500
 
@@ -75,9 +80,9 @@ static const struct {
 	"--type cert --pin %s --id %s --write-object " DER_CERT,
 };
 
-int tlvGet_u8buf(enum se05x_tag tag, size_t *index,
-		 uint8_t *buf, size_t len,
-		 uint8_t *rsp, size_t *olen)
+static int tlvGet_u8buf(enum se05x_tag tag, size_t *index,
+			uint8_t *buf, size_t len,
+			uint8_t *rsp, size_t *olen)
 {
 	size_t extended_len = 0;
 	size_t rsp_len = 0;
@@ -127,8 +132,8 @@ int tlvGet_u8buf(enum se05x_tag tag, size_t *index,
 	return 0;
 }
 
-int tlvGet_u8(enum se05x_tag tag, size_t *index,
-	      uint8_t *buf, size_t buf_len, uint8_t *rsp)
+static int tlvGet_u8(enum se05x_tag tag, size_t *index,
+		     uint8_t *buf, size_t buf_len, uint8_t *rsp)
 {
 	uint8_t *p = buf + *index;
 	uint8_t got_tag = *p++;
@@ -175,7 +180,8 @@ static int tlvGet_u16(enum se05x_tag tag, size_t *index,
 	return 0;
 }
 
-int tlvSet_u16(enum se05x_tag tag, uint8_t **buf, size_t *len,  uint16_t value)
+static int tlvSet_u16(enum se05x_tag tag, uint8_t **buf, size_t *len,
+		      uint16_t value)
 {
 	const size_t size_of_tlv = 1 + 1 + 2;
 	uint8_t *p = *buf;
@@ -193,8 +199,8 @@ int tlvSet_u16(enum se05x_tag tag, uint8_t **buf, size_t *len,  uint16_t value)
 	return 0;
 }
 
-static int tlvSet_u32(enum se05x_tag tag,
-		      uint8_t **buf, size_t *len, uint32_t value)
+static int tlvSet_u32(enum se05x_tag tag, uint8_t **buf, size_t *len,
+		      uint32_t value)
 {
 	const size_t tlv_len = 1 + 1 + 4;
 	uint8_t *p = *buf;
@@ -220,8 +226,8 @@ static int object_exist(uint32_t oid, bool *exist)
 	uint8_t CMD_OBJ_EXIST_HEADER[4] = {
 		0x80, 0x04, 0x00, 0x27,
 	};
-	uint8_t cmd[SE05X_MAX_BUF_SIZE_CMD] = { 0 };
-	uint8_t rsp[SE05X_MAX_BUF_SIZE_RSP] = { 0 };
+	uint8_t *cmd = malloc(SE05X_MAX_BUF_SIZE_CMD);
+	uint8_t *rsp = malloc(SE05X_MAX_BUF_SIZE_RSP);
 	uint8_t *p = cmd;
 	uint8_t *q = rsp;
 	size_t rsp_len = SE05X_MAX_BUF_SIZE_RSP;
@@ -230,9 +236,12 @@ static int object_exist(uint32_t oid, bool *exist)
 	uint8_t result;
 	size_t result_len = 1;
 
+	if (!cmd || !rsp)
+		return -ENOMEM;
+
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid)) {
 		printf("error, cant form command\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (se_apdu_request(SE_APDU_CASE_4,
@@ -240,16 +249,25 @@ static int object_exist(uint32_t oid, bool *exist)
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
 		printf("error, cant communicate with TEE core\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (tlvGet_u8buf(SE05x_TAG_1, &rsp_idx, rsp, rsp_len,
-			 &result, &result_len))
-		return -EINVAL;
+			 &result, &result_len)) {
+		goto error;
+	}
 
 	*exist = result == kSE05x_Result_SUCCESS ? true : false;
 
+	free(cmd);
+	free(rsp);
+
 	return 0;
+error:
+	free(cmd);
+	free(rsp);
+
+	return -EINVAL;
 }
 
 static int object_size(uint32_t oid, uint16_t *len)
@@ -257,17 +275,20 @@ static int object_size(uint32_t oid, uint16_t *len)
 	uint8_t CMD_OBJ_SIZE_HEADER[4] = {
 		0x80, 0x02, 0x00, 0x07,
 	};
-	uint8_t cmd[SE05X_MAX_BUF_SIZE_CMD] = { 0 };
-	uint8_t rsp[SE05X_MAX_BUF_SIZE_RSP] = { 0 };
+	uint8_t *cmd = malloc(SE05X_MAX_BUF_SIZE_CMD);
+	uint8_t *rsp = malloc(SE05X_MAX_BUF_SIZE_RSP);
 	uint8_t *p = cmd;
 	uint8_t *q = rsp;
 	size_t rsp_len = SE05X_MAX_BUF_SIZE_RSP;
 	size_t rsp_idx = 0;
 	size_t cmd_len = 0;
 
+	if (!cmd || !rsp)
+		return -ENOMEM;
+
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid)) {
 		printf("error, cant form command\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (se_apdu_request(SE_APDU_CASE_4,
@@ -275,15 +296,22 @@ static int object_size(uint32_t oid, uint16_t *len)
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
 		printf("error, cant communicate with TEE core\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (tlvGet_u16(SE05x_TAG_1, &rsp_idx, rsp, rsp_len, len)) {
 		printf("error, cant get response\n");
-		return -EINVAL;
+		goto error;
 	}
+	free(cmd);
+	free(rsp);
 
 	return 0;
+error:
+	free(cmd);
+	free(rsp);
+
+	return -EINVAL;
 }
 
 static int object_type(uint32_t oid, bool *is_binary)
@@ -291,8 +319,8 @@ static int object_type(uint32_t oid, bool *is_binary)
 	uint8_t CMD_OBJ_TYPE_HEADER[4] = {
 		0x80, 0x02, 0x00, 0x26,
 	};
-	uint8_t cmd[SE05X_MAX_BUF_SIZE_CMD] = { 0 };
-	uint8_t rsp[SE05X_MAX_BUF_SIZE_RSP] = { 0 };
+	uint8_t *cmd = malloc(SE05X_MAX_BUF_SIZE_CMD);
+	uint8_t *rsp = malloc(SE05X_MAX_BUF_SIZE_RSP);
 	uint8_t *p = cmd;
 	uint8_t *q = rsp;
 	size_t rsp_len = SE05X_MAX_BUF_SIZE_RSP;
@@ -300,9 +328,12 @@ static int object_type(uint32_t oid, bool *is_binary)
 	size_t rsp_idx = 0;
 	uint8_t type = 0;
 
+	if (!cmd || !rsp)
+		return -ENOMEM;
+
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid)) {
 		printf("error, cant form command\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (se_apdu_request(SE_APDU_CASE_4,
@@ -310,17 +341,25 @@ static int object_type(uint32_t oid, bool *is_binary)
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
 		printf("error, cant communicate with TEE core\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (tlvGet_u8(SE05x_TAG_1, &rsp_idx, rsp,  rsp_len, &type)) {
 		printf("error, cant read type\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	*is_binary = type == 0x0B ? true : false;
 
+	free(cmd);
+	free(rsp);
+
 	return 0;
+error:
+	free(cmd);
+	free(rsp);
+
+	return -EINVAL;
 }
 
 static int object_get(uint32_t oid, uint16_t offset, uint16_t len,
@@ -329,8 +368,8 @@ static int object_get(uint32_t oid, uint16_t offset, uint16_t len,
 	uint8_t CMD_OBJ_GET_HEADER[4] = {
 		0x80, 0x02, 0x00, 0x00
 	};
-	uint8_t cmd[SE05X_MAX_BUF_SIZE_CMD] = { 0 };
-	uint8_t rsp[SE05X_MAX_BUF_SIZE_RSP] = { 0 };
+	uint8_t *cmd = malloc(SE05X_MAX_BUF_SIZE_CMD);
+	uint8_t *rsp = malloc(SE05X_MAX_BUF_SIZE_RSP);
 	uint8_t *p = cmd;
 	uint8_t *q = rsp;
 	size_t rsp_len = SE05X_MAX_BUF_SIZE_RSP;
@@ -338,32 +377,43 @@ static int object_get(uint32_t oid, uint16_t offset, uint16_t len,
 	size_t cmd_len = 0;
 	size_t index = 0;
 
+	if (!cmd || !rsp)
+		return -ENOMEM;
+
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid))
-		return -EINVAL;
+		goto error;
 
 	if (offset && tlvSet_u16(SE05x_TAG_2, &p, &cmd_len, offset))
-		return -EINVAL;
+		goto error;
 
 	if (len && tlvSet_u16(SE05x_TAG_3, &p, &cmd_len, len))
-		return -EINVAL;
+		goto error;
 
 	if (se_apdu_request(SE_APDU_CASE_4E,
 			    CMD_OBJ_GET_HEADER, sizeof(CMD_OBJ_GET_HEADER),
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
 		printf("error, cant communicate with TEE core\n");
-		return -EINVAL;
+		goto error;
 	}
 
 	if (tlvGet_u8buf(SE05x_TAG_1, &rsp_idx, rsp, rsp_len, buf, buf_len)){
 		printf(("error, cant get the binary data\n"));
-		return -EINVAL;
+		goto error;
 	}
 
+	free(cmd);
+	free(rsp);
+
 	return 0;
+error:
+	free(cmd);
+	free(rsp);
+
+	return -EINVAL;
 }
 
-int get_certificate(uint32_t oid, char *fname)
+static int get_certificate(uint32_t oid, char *fname)
 {
 	bool is_binary = false;
 	size_t file_len = 0;
@@ -473,17 +523,30 @@ static const struct option options[] = {
 		.flag = NULL,
 	},
 	{
+#define se050_opt 5
+		.name = "se050",
+		.has_arg = 0,
+		.flag = NULL,
+	},
+	{
 		.name = NULL,
 	},
 };
 
 static void usage(void)
 {
-	fprintf(stderr, "This tool imports certficates from the NXP SE050 into the cryptoki\n");
+	fprintf(stderr, "This tool imports certficates from the NXP SE051 into the cryptoki\n");
+	fprintf(stderr, "Use the --se050 optional flag if the device is not an SE051\n");
+
 	fprintf(stderr, "Usage: with:\n");
 	fprintf(stderr, "--help             Display this menu\n");
-	fprintf(stderr, "--import <nxp object it in hex> --pin <pin for authentication> --id <pkcs11 object>  Import a Certificate to pkcs11\n");
-	fprintf(stderr, "--show  <nxp object it in hex>                                                       Output the Certificate to the console\n");
+	fprintf(stderr, "--import <se05x oid> "
+			"--pin <pkcs11 pin> "
+			"--id <pkcs11 object> "
+			"[--se050] \t"
+			"Import a Certificate to pkcs11\n");
+	fprintf(stderr, "--show   <se05x oid> [--se050]\t\t\t\t\t\t"
+			"Output the Certificate to the console\n");
 	fprintf(stderr, "\n");
 }
 
@@ -517,6 +580,11 @@ int main(int argc, char *argv[])
 			break;
 		case sks_pin_opt:
 			sks_pin = optarg;
+			break;
+		case se050_opt:
+			SE05X_MAX_BUF_SIZE_CMD = SE050_MAX_BUF_SIZE_CMD;
+			SE05X_MAX_BUF_SIZE_RSP = SE050_MAX_BUF_SIZE_RSP;
+			SE05X_TLV_BUF_SIZE_CMD = SE050_MAX_BUF_SIZE_CMD;
 			break;
 		default:
 			usage();

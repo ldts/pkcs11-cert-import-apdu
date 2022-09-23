@@ -1,22 +1,25 @@
 
-Import NXPSE050 Certificates to PKCS#11
-=======================================
+Import NXPSE050/51 Certificates to PKCS#11
+===========================================
 
 Intro and Usage
 ----------------
 
 This Secured Utility allows the user to import pre-provisioned certificates
-from the NXP SE050 via OP-TEE into the pkcs11 database.
+from the NXP SE050/51 via OP-TEE into the pkcs11 database.
 
 Requires that OP-TEE configures the APDU PTA.
 
 Examples of usage::
 
-  * Import NXP SE050 Certficate with the id 0xf0000123 into pkcs#11
+  * Import NXP SE051 Certficate with the id 0xf0000123 into pkcs#11
     import-pkcs11 --import 0xf0000123 --id 45 --pin 87654321
 
   * Show NXP SE050 Certficate with the id 0xf0000123 on the console
-    import-pkcs11 --show 0xf0000123
+    import-pkcs11 --show 0xf0000123 --se050
+
+
+Use the optional --se050 if the device is an SE050
 
 Have fun::
 
