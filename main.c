@@ -480,15 +480,19 @@ static int do_certificate(bool import, uint32_t nxp, char *id, char *pin)
 
 	if (import) {
 		sprintf(cmd_buf, cmd.import_cert, pin, id);
+
 		ret = system(cmd_buf);
 		if (ret)
-			errx(1, "pkcs11-tool import certificate error %d", ret);
-
-		return system(cmd.rm_der);
+			fprintf(stderr,
+				"pkcs11-tool import cert error %d\n", ret);
+		goto out;
 	}
 
-	/* Print the certificate */
-	return system(cmd.show_cert);
+	ret =  system(cmd.show_cert);
+	if (ret)
+		fprintf(stderr, "pkcs11-tool show cert error %d\n", ret);
+out:
+	return (system(cmd.rm_der) | ret);
 }
 
 static const struct option options[] = {
