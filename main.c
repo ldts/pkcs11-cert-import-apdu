@@ -4,16 +4,19 @@
  */
 #include <err.h>
 #include <errno.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <sys/wait.h>
 #include <getopt.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "se_tee.h"
+
+/* Temporary file */
+#define DER_CERT "/tmp/cert.der"
 
 /* Device detection not implemented */
 #define SE050_MAX_BUF_SIZE_CMD (892)
@@ -67,17 +70,22 @@ enum se05x_result {
 	kSE05x_Result_FAILURE = 0x02,
 };
 
-#define DER_CERT "/tmp/cert.der"
-
 static const struct {
 	const char *import_cert;
 	const char *show_cert;
 	const char *rm_der;
 } cmd = {
-	.rm_der = "rm "DER_CERT,
-	.show_cert = "openssl x509 -inform der -in " DER_CERT " -text ",
-	.import_cert = "pkcs11-tool --module /usr/lib/libckteec.so.0.1.0 -l "
-	"--type cert --pin %s --id %s --write-object " DER_CERT,
+	.rm_der = "/bin/rm "DER_CERT,
+	.show_cert = "/usr/bin/openssl x509"
+		     "-inform der "
+		     "-in "DER_CERT
+		     " - text",
+	.import_cert = "/usr/bin/pkcs11-tool "
+		       "--module /usr/lib/libckteec.so.0.1.0 -l "
+		       "--type cert "
+		       "--pin %s "
+		       "--id %s "
+		       "--write-object "DER_CERT,
 };
 
 static int tlvGet_u8buf(enum se05x_tag tag, size_t *index,
@@ -150,7 +158,7 @@ static int tlvGet_u8(enum se05x_tag tag, size_t *index,
 		return -EINVAL;
 
 	*rsp = *p;
-	*index += (1 + 1 + (rsp_len));
+	*index += 1 + 1 + rsp_len;
 
 	return 0;
 }
@@ -173,9 +181,9 @@ static int tlvGet_u16(enum se05x_tag tag, size_t *index,
 	if (rsp_len > 2)
 		return -EINVAL;
 
-	*rsp = (*p++) << 8;
+	*rsp = *p++ << 8;
 	*rsp |= *p++;
-	*index += (1 + 1 + rsp_len);
+	*index += 1 + 1 + rsp_len;
 
 	return 0;
 }
@@ -189,10 +197,10 @@ static int tlvSet_u16(enum se05x_tag tag, uint8_t **buf, size_t *len,
 	if (size_of_tlv + *len > SE05X_TLV_BUF_SIZE_CMD)
 		return -EINVAL;
 
-	*p++ = (uint8_t)tag;
+	*p++ = tag;
 	*p++ = 2;
-	*p++ = (uint8_t)((value >> 1 * 8) & 0xFF);
-	*p++ = (uint8_t)((value >> 0 * 8) & 0xFF);
+	*p++ = (value >> 1 * 8) & 0xFF;
+	*p++ = (value >> 0 * 8) & 0xFF;
 	*buf = p;
 	*len += size_of_tlv;
 
@@ -208,12 +216,12 @@ static int tlvSet_u32(enum se05x_tag tag, uint8_t **buf, size_t *len,
 	if (tlv_len + *len > SE05X_TLV_BUF_SIZE_CMD)
 		return -EINVAL;
 
-	*p++ = (uint8_t)tag;
+	*p++ = tag;
 	*p++ = 4;
-	*p++ = (uint8_t)((value >> 3 * 8) & 0xFF);
-	*p++ = (uint8_t)((value >> 2 * 8) & 0xFF);
-	*p++ = (uint8_t)((value >> 1 * 8) & 0xFF);
-	*p++ = (uint8_t)((value >> 0 * 8) & 0xFF);
+	*p++ = (value >> 3 * 8) & 0xFF;
+	*p++ = (value >> 2 * 8) & 0xFF;
+	*p++ = (value >> 1 * 8) & 0xFF;
+	*p++ = (value >> 0 * 8) & 0xFF;
 
 	*buf = p;
 	*len += tlv_len;
@@ -233,14 +241,14 @@ static int object_exist(uint32_t oid, bool *exist)
 	size_t rsp_len = SE05X_MAX_BUF_SIZE_RSP;
 	size_t rsp_idx = 0;
 	size_t cmd_len = 0;
-	uint8_t result;
 	size_t result_len = 1;
+	uint8_t result = 0;
 
 	if (!cmd || !rsp)
 		return -ENOMEM;
 
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid)) {
-		printf("error, cant form command\n");
+		fprintf(stderr,"error, cant form command\n");
 		goto error;
 	}
 
@@ -248,7 +256,7 @@ static int object_exist(uint32_t oid, bool *exist)
 			    CMD_OBJ_EXIST_HEADER, sizeof(CMD_OBJ_EXIST_HEADER),
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
-		printf("error, cant communicate with TEE core\n");
+		fprintf(stderr,"error, cant communicate with TEE core\n");
 		goto error;
 	}
 
@@ -287,7 +295,7 @@ static int object_size(uint32_t oid, uint16_t *len)
 		return -ENOMEM;
 
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid)) {
-		printf("error, cant form command\n");
+		fprintf(stderr,"error, cant form command\n");
 		goto error;
 	}
 
@@ -295,12 +303,12 @@ static int object_size(uint32_t oid, uint16_t *len)
 			    CMD_OBJ_SIZE_HEADER, sizeof(CMD_OBJ_SIZE_HEADER),
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
-		printf("error, cant communicate with TEE core\n");
+		fprintf(stderr,"error, cant communicate with TEE core\n");
 		goto error;
 	}
 
 	if (tlvGet_u16(SE05x_TAG_1, &rsp_idx, rsp, rsp_len, len)) {
-		printf("error, cant get response\n");
+		fprintf(stderr,"error, cant get response\n");
 		goto error;
 	}
 	free(cmd);
@@ -332,7 +340,7 @@ static int object_type(uint32_t oid, bool *is_binary)
 		return -ENOMEM;
 
 	if (tlvSet_u32(SE05x_TAG_1, &p, &cmd_len, oid)) {
-		printf("error, cant form command\n");
+		fprintf(stderr,"error, cant form command\n");
 		goto error;
 	}
 
@@ -340,12 +348,12 @@ static int object_type(uint32_t oid, bool *is_binary)
 			    CMD_OBJ_TYPE_HEADER, sizeof(CMD_OBJ_TYPE_HEADER),
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
-		printf("error, cant communicate with TEE core\n");
+		fprintf(stderr,"error, cant communicate with TEE core\n");
 		goto error;
 	}
 
 	if (tlvGet_u8(SE05x_TAG_1, &rsp_idx, rsp,  rsp_len, &type)) {
-		printf("error, cant read type\n");
+		fprintf(stderr,"error, cant read type\n");
 		goto error;
 	}
 
@@ -393,12 +401,12 @@ static int object_get(uint32_t oid, uint16_t offset, uint16_t len,
 			    CMD_OBJ_GET_HEADER, sizeof(CMD_OBJ_GET_HEADER),
 			    cmd, cmd_len,
 			    rsp, &rsp_len)) {
-		printf("error, cant communicate with TEE core\n");
+		fprintf(stderr,"error, cant communicate with TEE core\n");
 		goto error;
 	}
 
 	if (tlvGet_u8buf(SE05x_TAG_1, &rsp_idx, rsp, rsp_len, buf, buf_len)){
-		printf(("error, cant get the binary data\n"));
+		fprintf(stderr,("error, cant get the binary data\n"));
 		goto error;
 	}
 
@@ -423,26 +431,27 @@ static int get_certificate(uint32_t oid, char *fname)
 	uint16_t len = 0;
 
 	if (object_exist(oid, &found) || !found) {
-		printf("Error, no object found!\n");
+		fprintf(stderr,"Error, no object found!\n");
 		return -EINVAL;
 	}
 
 	if (object_type(oid, &is_binary) || !is_binary) {
-		printf("Error, not binary type!\n");
+		fprintf(stderr,"Error, not binary type!\n");
 		return -EINVAL;
 	}
 
 	if (object_size(oid, &len) || !len) {
-		printf("Error, invalid size!\n");
+		fprintf(stderr,"Error, invalid size!\n");
 		return -EINVAL;
 	}
 
 	bin = calloc(1, len);
 	if (!bin) {
-		printf("Error, not enough memory\n");
-		return -EINVAL;
+		fprintf(stderr,"Error, not enough memory\n");
+		return -ENOMEM;
 	}
 
+	/* Download the Certificate to the heap */
 	file_len = len;
 	offset = 0;
 	do {
@@ -450,7 +459,7 @@ static int get_certificate(uint32_t oid, char *fname)
 			     BINARY_WRITE_MAX_LEN : len;
 
 		if (object_get(oid, offset, rcv, bin + offset, &rcv)) {
-			printf("Object 0x%x cant be retrieved!\n", oid);
+			fprintf(stderr,"Object 0x%x cant be retrieved!\n", oid);
 			free(bin);
 			return -EINVAL;
 		}
@@ -458,14 +467,17 @@ static int get_certificate(uint32_t oid, char *fname)
 		len -= rcv;
 	} while (len);
 
+	/* Write the certificate to the filesystem */
 	FILE *file = fopen(fname, "w+");
 	if (!file) {
-		printf("Cant open the file for writing!\n");
+		fprintf(stderr,"Cant open the file for writing!\n");
 		free(bin);
 		return -EINVAL;
 	}
 
 	fwrite(bin, file_len, 1, file);
+
+	/* Housekeep */
 	fclose(file);
 	free(bin);
 
@@ -475,14 +487,21 @@ static int get_certificate(uint32_t oid, char *fname)
 static int do_certificate(bool import, uint32_t nxp, char *id, char *pin)
 {
 	char cmd_buf[512] = { '\0' };
-	int ret;
+	int ret = 0;
 
+	/* Download the certificate from the NXP SE050/1 into a temporary
+	 * file in DER format */
 	if (get_certificate(nxp, DER_CERT))
 		errx(1, "APDU import certificate failed");
 
 	if (import) {
 		sprintf(cmd_buf, cmd.import_cert, pin, id);
 
+		/* Import into the pkcs#11 databe
+		 * For OP-TEE PKCS#11 TA it is preferred to configure OP-TEE
+		 * with RPMB support so the Certificate is persistant across
+		 * firmware upgrades (easier to protect it this way).
+		 */
 		ret = system(cmd_buf);
 		if (ret)
 			fprintf(stderr,
@@ -490,10 +509,11 @@ static int do_certificate(bool import, uint32_t nxp, char *id, char *pin)
 		goto out;
 	}
 
-	ret =  system(cmd.show_cert);
+	ret = system(cmd.show_cert);
 	if (ret)
 		fprintf(stderr, "pkcs11-tool show cert error %d\n", ret);
 out:
+	/* Remove the temporary file */
 	return (system(cmd.rm_der) | ret);
 }
 
@@ -541,16 +561,16 @@ static const struct option options[] = {
 
 static void usage(void)
 {
-	fprintf(stderr, "This tool imports certficates from the NXP SE051 into the cryptoki\n");
+	fprintf(stderr, "This tool imports certficates from the NXP SE050/1 into the cryptoki\n");
 	fprintf(stderr, "Use the --se050 optional flag if the device is not an SE051\n");
 
 	fprintf(stderr, "Usage: with:\n");
-	fprintf(stderr, "--help             Display this menu\n");
+	fprintf(stderr, "--help \t\t\t\t\t\t\t\t\tDisplay this menu\n");
 	fprintf(stderr, "--import <se05x oid> "
 			"--pin <pkcs11 pin> "
 			"--id <pkcs11 object> "
 			"[--se050] \t"
-			"Import a Certificate to pkcs11\n");
+			"Import a Certificate to a PKCS#11 token\n");
 	fprintf(stderr, "--show   <se05x oid> [--se050]\t\t\t\t\t\t"
 			"Output the Certificate to the console\n");
 	fprintf(stderr, "\n");
