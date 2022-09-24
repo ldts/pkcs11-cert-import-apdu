@@ -451,6 +451,7 @@ static int get_certificate(uint32_t oid, char *fname)
 
 		if (object_get(oid, offset, rcv, bin + offset, &rcv)) {
 			printf("Object 0x%x cant be retrieved!\n", oid);
+			free(bin);
 			return -EINVAL;
 		}
 		offset += rcv;
@@ -460,6 +461,7 @@ static int get_certificate(uint32_t oid, char *fname)
 	FILE *file = fopen(fname, "w+");
 	if (!file) {
 		printf("Cant open the file for writing!\n");
+		free(bin);
 		return -EINVAL;
 	}
 
