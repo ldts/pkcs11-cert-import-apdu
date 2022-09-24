@@ -15,9 +15,6 @@
 
 #include "se_tee.h"
 
-/* Temporary file */
-#define DER_CERT "/tmp/cert.der"
-
 /* Device detection not implemented */
 #define SE050_MAX_BUF_SIZE_CMD (892)
 #define SE050_MAX_BUF_SIZE_RSP (892)
@@ -75,17 +72,17 @@ static const struct {
 	const char *show_cert;
 	const char *rm_der;
 } cmd = {
-	.rm_der = "/bin/rm "DER_CERT,
-	.show_cert = "/usr/bin/openssl x509"
+	.rm_der = "/bin/rm %s",
+	.show_cert = "/usr/bin/openssl x509 "
 		     "-inform der "
-		     "-in "DER_CERT
-		     " - text",
+		     "-text "
+		     "-in %s",
 	.import_cert = "/usr/bin/pkcs11-tool "
 		       "--module /usr/lib/libckteec.so.0.1.0 -l "
 		       "--type cert "
 		       "--pin %s "
 		       "--id %s "
-		       "--write-object "DER_CERT,
+		       "--write-object %s",
 };
 
 static int tlvGet_u8buf(enum se05x_tag tag, size_t *index,
@@ -487,15 +484,18 @@ static int get_certificate(uint32_t oid, char *fname)
 static int do_certificate(bool import, uint32_t nxp, char *id, char *pin)
 {
 	char cmd_buf[512] = { '\0' };
+	char der[50] = { '\0' };
 	int ret = 0;
+
+	sprintf(der, "/tmp/cert-%d.der", getpid());
 
 	/* Download the certificate from the NXP SE050/1 into a temporary
 	 * file in DER format */
-	if (get_certificate(nxp, DER_CERT))
+	if (get_certificate(nxp, der))
 		errx(1, "APDU import certificate failed");
 
 	if (import) {
-		sprintf(cmd_buf, cmd.import_cert, pin, id);
+		sprintf(cmd_buf, cmd.import_cert, pin, id, der);
 
 		/* Import into the pkcs#11 databe
 		 * For OP-TEE PKCS#11 TA it is preferred to configure OP-TEE
@@ -509,12 +509,15 @@ static int do_certificate(bool import, uint32_t nxp, char *id, char *pin)
 		goto out;
 	}
 
-	ret = system(cmd.show_cert);
+	sprintf(cmd_buf, cmd.show_cert, der);
+	ret = system(cmd_buf);
 	if (ret)
 		fprintf(stderr, "pkcs11-tool show cert error %d\n", ret);
 out:
 	/* Remove the temporary file */
-	return (system(cmd.rm_der) | ret);
+	sprintf(cmd_buf, cmd.rm_der, der);
+
+	return (system(cmd_buf) | ret);
 }
 
 static const struct option options[] = {
@@ -571,7 +574,8 @@ static void usage(void)
 			"--id <pkcs11 object> "
 			"[--se050] \t"
 			"Import a Certificate to a PKCS#11 token\n");
-	fprintf(stderr, "--show   <se05x oid> [--se050]\t\t\t\t\t\t"
+	fprintf(stderr, "--show   <se05x oid> "
+			"[--se050]\t\t\t\t\t\t"
 			"Output the Certificate to the console\n");
 	fprintf(stderr, "\n");
 }
