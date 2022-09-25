@@ -141,13 +141,12 @@ static int tlvGet_u8(enum se05x_tag tag, size_t *index,
 		     uint8_t *buf, size_t buf_len, uint8_t *rsp)
 {
 	uint8_t *p = buf + *index;
-	uint8_t got_tag = *p++;
 	size_t rsp_len = 0;
 
 	if (*index > buf_len)
 		return -EINVAL;
 
-	if (got_tag != tag)
+	if (*p++ != tag)
 		return -EINVAL;
 
 	rsp_len = *p++;
@@ -165,13 +164,12 @@ static int tlvGet_u16(enum se05x_tag tag, size_t *index,
 		      uint16_t *rsp)
 {
 	uint8_t *p = buf + *index;
-	uint8_t got_tag = *p++;
 	size_t rsp_len = 0;
 
 	if (*index > buf_len)
 		return -EINVAL;
 
-	if (got_tag != tag)
+	if (*p++ != tag)
 		return -EINVAL;
 
 	rsp_len = *p++;
